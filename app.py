@@ -13,18 +13,18 @@ st.set_page_config(
 )
 
 # =========================
-# ESTILOS / COLORES
+# COLORES
 # =========================
-COLOR_FONDO = "#0E1117"
 COLOR_AZUL = "#1F77B4"
 COLOR_VERDE = "#2CA02C"
 COLOR_NARANJA = "#FF7F0E"
 COLOR_ROJO = "#D62728"
 COLOR_GRIS = "#7F7F7F"
+COLOR_MORADO = "#9467BD"
 
 
 # =========================
-# UTILIDADES GENERALES
+# UTILIDADES
 # =========================
 def limpiar_texto(valor):
     if pd.isna(valor):
@@ -42,7 +42,7 @@ def normalizar_codigo(valor):
 
 
 # =========================
-# LECTURA DE DESCRIPTORES
+# DESCRIPTORES
 # =========================
 def detectar_hoja_descriptores(xls):
     for hoja in xls.sheet_names:
@@ -95,13 +95,15 @@ def leer_descriptores(xls):
 
 
 # =========================
-# LECTURA DE PARTICIPANTES / INSTITUCIONES
+# PARTICIPANTES / INSTITUCIONES
 # =========================
 def detectar_fila_participantes(df_raw):
     for i in range(len(df_raw)):
         fila = [limpiar_texto(x).lower() for x in df_raw.iloc[i].tolist()]
         texto_fila = " | ".join(fila)
         if "participante" in texto_fila and "institución" in texto_fila:
+            return i
+        if "participante" in texto_fila and "institucion" in texto_fila:
             return i
     return None
 
@@ -141,11 +143,7 @@ def leer_participantes_instituciones(df_raw):
     if df_part.empty:
         df_inst = pd.DataFrame(columns=["INSTITUCION"])
     else:
-        df_inst = (
-            df_part[["INSTITUCION"]]
-            .copy()
-            .dropna()
-        )
+        df_inst = df_part[["INSTITUCION"]].copy()
         df_inst["INSTITUCION"] = df_inst["INSTITUCION"].apply(limpiar_texto)
         df_inst = df_inst[df_inst["INSTITUCION"] != ""]
         df_inst = df_inst.drop_duplicates(subset=["INSTITUCION"], keep="first").reset_index(drop=True)
@@ -154,23 +152,16 @@ def leer_participantes_instituciones(df_raw):
 
 
 # =========================
-# DETECCIÓN ROBUSTA DE MATRIZ
+# MATRIZ MIC MAC
 # =========================
-def es_codigo_posible(valor):
-    txt = normalizar_codigo(valor)
-    if txt == "":
-        return False
-    if txt in ["VARIABLE", "CODIGO", "DESCRIPTOR"]:
-        return False
-    return True
+def detectar_hoja_matriz(xls):
+    for hoja in xls.sheet_names:
+        if "MATRIZ" in hoja.upper():
+            return hoja
+    return None
 
 
 def detectar_fila_encabezado_matriz(df_raw):
-    """
-    Busca una fila donde:
-    - La primera celda esté vacía
-    - Las siguientes celdas tengan varios códigos no vacíos
-    """
     for i in range(len(df_raw)):
         fila = [limpiar_texto(x) for x in df_raw.iloc[i].tolist()]
 
@@ -179,7 +170,6 @@ def detectar_fila_encabezado_matriz(df_raw):
 
         primera = fila[0]
         resto = fila[1:]
-
         no_vacios = [normalizar_codigo(x) for x in resto if not es_vacio(x)]
 
         if es_vacio(primera) and len(no_vacios) >= 3:
@@ -232,14 +222,12 @@ def leer_matriz_micmac(df_raw, catalogo_descriptores):
     matriz_df = pd.DataFrame(filas_matriz)
     matriz_df["CODIGO"] = matriz_df["CODIGO"].apply(normalizar_codigo)
 
-    # Limpiar valores numéricos
     for c in matriz_df.columns[1:]:
         matriz_df[c] = pd.to_numeric(matriz_df[c], errors="coerce").fillna(0).astype(int)
         matriz_df[c] = matriz_df[c].clip(0, 3)
 
     matriz_df = matriz_df.drop_duplicates(subset=["CODIGO"], keep="first").reset_index(drop=True)
 
-    # Asegurar solo columnas presentes en filas también
     codigos_filas = matriz_df["CODIGO"].tolist()
     codigos_validos = [c for c in codigos_columnas if c in codigos_filas]
 
@@ -248,11 +236,9 @@ def leer_matriz_micmac(df_raw, catalogo_descriptores):
     matriz_df = matriz_df.set_index("CODIGO")
     matriz_df = matriz_df.loc[codigos_validos, codigos_validos]
 
-    # Forzar diagonal en 0
     for i in range(len(matriz_df)):
         matriz_df.iat[i, i] = 0
 
-    # Cruce con catálogo
     map_desc = dict(zip(catalogo_descriptores["CODIGO"], catalogo_descriptores["DESCRIPTOR"]))
     map_cat = dict(zip(catalogo_descriptores["CODIGO"], catalogo_descriptores["CATEGORIA"]))
 
@@ -266,8 +252,33 @@ def leer_matriz_micmac(df_raw, catalogo_descriptores):
 
 
 # =========================
-# ANALISIS MIC MAC
+# CLASIFICACION MIC MAC
 # =========================
+def clasificar_zona(inf, dep, corte_inf, corte_dep):
+    if inf == 0 and dep == 0:
+        return "SIN RELACION"
+
+    en_linea_inf = inf == corte_inf
+    en_linea_dep = dep == corte_dep
+
+    if en_linea_inf or en_linea_dep:
+        return "FRONTERA"
+
+    if inf > corte_inf and dep < corte_dep:
+        return "PODER"
+
+    if inf > corte_inf and dep > corte_dep:
+        return "CONFLICTO"
+
+    if inf < corte_inf and dep > corte_dep:
+        return "RESULTADO"
+
+    if inf < corte_inf and dep < corte_dep:
+        return "AUTONOMA"
+
+    return "FRONTERA"
+
+
 def calcular_micmac(matriz_df, analisis_base):
     influencia = matriz_df.sum(axis=1)
     dependencia = matriz_df.sum(axis=0)
@@ -276,37 +287,40 @@ def calcular_micmac(matriz_df, analisis_base):
     df["INFLUENCIA"] = df["CODIGO"].map(influencia.to_dict()).fillna(0).astype(int)
     df["DEPENDENCIA"] = df["CODIGO"].map(dependencia.to_dict()).fillna(0).astype(int)
 
-    media_influencia = df["INFLUENCIA"].mean() if not df.empty else 0
-    media_dependencia = df["DEPENDENCIA"].mean() if not df.empty else 0
+    corte_influencia = float(df["INFLUENCIA"].median()) if not df.empty else 0.0
+    corte_dependencia = float(df["DEPENDENCIA"].median()) if not df.empty else 0.0
 
-    def clasificar_zona(row):
-        inf = row["INFLUENCIA"]
-        dep = row["DEPENDENCIA"]
+    df["ZONA"] = df.apply(
+        lambda row: clasificar_zona(
+            row["INFLUENCIA"],
+            row["DEPENDENCIA"],
+            corte_influencia,
+            corte_dependencia
+        ),
+        axis=1
+    )
 
-        if inf == 0 and dep == 0:
-            return "SIN RELACION"
+    orden_zona = {
+        "PODER": 1,
+        "CONFLICTO": 2,
+        "RESULTADO": 3,
+        "AUTONOMA": 4,
+        "FRONTERA": 5,
+        "SIN RELACION": 6
+    }
 
-        if inf >= media_influencia and dep < media_dependencia:
-            return "PODER"
-        elif inf >= media_influencia and dep >= media_dependencia:
-            return "CONFLICTO"
-        elif inf < media_influencia and dep >= media_dependencia:
-            return "RESULTADO"
-        else:
-            return "AUTONOMA"
-
-    df["ZONA"] = df.apply(clasificar_zona, axis=1)
-
+    df["ORDEN_ZONA"] = df["ZONA"].map(orden_zona).fillna(99)
     df = df.sort_values(
-        by=["INFLUENCIA", "DEPENDENCIA", "DESCRIPTOR"],
-        ascending=[False, False, True]
+        by=["ORDEN_ZONA", "INFLUENCIA", "DEPENDENCIA", "DESCRIPTOR"],
+        ascending=[True, False, False, True]
     ).reset_index(drop=True)
+    df = df.drop(columns=["ORDEN_ZONA"])
 
-    return df, media_influencia, media_dependencia
+    return df, corte_influencia, corte_dependencia
 
 
 def construir_listado_zonas(df_micmac):
-    orden = ["PODER", "CONFLICTO", "RESULTADO", "AUTONOMA", "SIN RELACION"]
+    orden = ["PODER", "CONFLICTO", "RESULTADO", "AUTONOMA", "FRONTERA", "SIN RELACION"]
     bloques = []
 
     for zona in orden:
@@ -329,10 +343,12 @@ def color_zona(zona):
         return COLOR_AZUL
     if zona == "AUTONOMA":
         return COLOR_NARANJA
+    if zona == "FRONTERA":
+        return COLOR_MORADO
     return COLOR_GRIS
 
 
-def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia):
+def generar_png_mapa_micmac(df_micmac, corte_influencia, corte_dependencia):
     fig, ax = plt.subplots(figsize=(12, 8), dpi=200)
 
     for _, row in df_micmac.iterrows():
@@ -349,26 +365,26 @@ def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia):
             alpha=0.9
         )
 
-        etiqueta = row["DESCRIPTOR"]
+        etiqueta = row["CODIGO"]
         ax.text(
-            x + 0.15,
-            y + 0.15,
+            x + 0.12,
+            y + 0.12,
             etiqueta,
             fontsize=8,
             ha="left",
             va="bottom"
         )
 
-    ax.axvline(media_dependencia, linestyle="--", color="gray", linewidth=1)
-    ax.axhline(media_influencia, linestyle="--", color="gray", linewidth=1)
+    ax.axvline(corte_dependencia, linestyle="--", color="gray", linewidth=1)
+    ax.axhline(corte_influencia, linestyle="--", color="gray", linewidth=1)
 
     ax.set_title("Mapa MIC MAC", fontsize=18)
     ax.set_xlabel("Dependencia")
     ax.set_ylabel("Influencia")
     ax.grid(True, alpha=0.25)
 
-    max_x = max(df_micmac["DEPENDENCIA"].max(), media_dependencia) + 2
-    max_y = max(df_micmac["INFLUENCIA"].max(), media_influencia) + 2
+    max_x = max(float(df_micmac["DEPENDENCIA"].max()), float(corte_dependencia)) + 2 if not df_micmac.empty else 5
+    max_y = max(float(df_micmac["INFLUENCIA"].max()), float(corte_influencia)) + 2 if not df_micmac.empty else 5
     ax.set_xlim(0, max_x)
     ax.set_ylim(0, max_y)
 
@@ -414,21 +430,20 @@ def generar_png_matriz(matriz_df):
 
 
 # =========================
-# EXPORTACION EXCEL
+# EXCEL
 # =========================
 def exportar_excel_resultados(
     nombre_archivo_fuente,
     participantes_df,
     instituciones_df,
     matriz_df,
-    df_micmac
+    df_micmac,
+    corte_influencia,
+    corte_dependencia
 ):
     salida = io.BytesIO()
 
     with pd.ExcelWriter(salida, engine="xlsxwriter") as writer:
-        wb = writer.book
-
-        # Hoja resumen
         resumen = pd.DataFrame({
             "CAMPO": [
                 "Archivo fuente",
@@ -437,7 +452,10 @@ def exportar_excel_resultados(
                 "Cantidad de participantes",
                 "Cantidad de instituciones únicas",
                 "Suma total influencia",
-                "Suma total dependencia"
+                "Suma total dependencia",
+                "Corte influencia",
+                "Corte dependencia",
+                "Metodo de corte"
             ],
             "VALOR": [
                 nombre_archivo_fuente,
@@ -446,27 +464,24 @@ def exportar_excel_resultados(
                 len(participantes_df),
                 len(instituciones_df),
                 int(df_micmac["INFLUENCIA"].sum()) if not df_micmac.empty else 0,
-                int(df_micmac["DEPENDENCIA"].sum()) if not df_micmac.empty else 0
+                int(df_micmac["DEPENDENCIA"].sum()) if not df_micmac.empty else 0,
+                corte_influencia,
+                corte_dependencia,
+                "Mediana"
             ]
         })
         resumen.to_excel(writer, sheet_name="RESUMEN", index=False)
 
-        # Participantes
         participantes_df.to_excel(writer, sheet_name="PARTICIPANTES", index=False)
-
-        # Instituciones
         instituciones_df.to_excel(writer, sheet_name="INSTITUCIONES", index=False)
 
-        # Matriz limpia
         matriz_export = matriz_df.copy()
         matriz_export.insert(0, "CODIGO", matriz_export.index)
         matriz_export.to_excel(writer, sheet_name="MATRIZ_LIMPIA", index=False)
 
-        # Analisis MIC MAC
         df_micmac.to_excel(writer, sheet_name="ANALISIS_MICMAC", index=False)
 
-        # Por zonas
-        zonas = ["PODER", "CONFLICTO", "RESULTADO", "AUTONOMA", "SIN RELACION"]
+        zonas = ["PODER", "CONFLICTO", "RESULTADO", "AUTONOMA", "FRONTERA", "SIN RELACION"]
         filas_zona = []
 
         for zona in zonas:
@@ -484,15 +499,16 @@ def exportar_excel_resultados(
 
         pd.DataFrame(filas_zona).to_excel(writer, sheet_name="PROBLEMATICAS_POR_ZONA", index=False)
 
-        # Ajustes de ancho
-        for hoja, df in {
+        hojas = {
             "RESUMEN": resumen,
             "PARTICIPANTES": participantes_df,
             "INSTITUCIONES": instituciones_df,
             "MATRIZ_LIMPIA": matriz_export,
             "ANALISIS_MICMAC": df_micmac,
             "PROBLEMATICAS_POR_ZONA": pd.DataFrame(filas_zona)
-        }.items():
+        }
+
+        for hoja, df in hojas.items():
             ws = writer.sheets[hoja]
             if df.empty:
                 continue
@@ -501,7 +517,7 @@ def exportar_excel_resultados(
                     len(str(col)),
                     df[col].astype(str).map(len).max() if len(df) > 0 else 0
                 )
-                ws.set_column(idx, idx, min(max(max_len + 2, 14), 50))
+                ws.set_column(idx, idx, min(max(max_len + 2, 14), 55))
 
     return salida.getvalue()
 
@@ -512,12 +528,7 @@ def exportar_excel_resultados(
 def procesar_archivo_excel(file):
     xls = pd.ExcelFile(file)
 
-    hoja_matriz = None
-    for hoja in xls.sheet_names:
-        if "MATRIZ" in hoja.upper():
-            hoja_matriz = hoja
-            break
-
+    hoja_matriz = detectar_hoja_matriz(xls)
     if hoja_matriz is None:
         raise ValueError("No se encontró una hoja llamada 'MATRIZ' en el archivo.")
 
@@ -525,7 +536,7 @@ def procesar_archivo_excel(file):
     catalogo = leer_descriptores(xls)
     participantes_df, instituciones_df = leer_participantes_instituciones(df_raw_matriz)
     matriz_df, analisis_base = leer_matriz_micmac(df_raw_matriz, catalogo)
-    df_micmac, media_influencia, media_dependencia = calcular_micmac(matriz_df, analisis_base)
+    df_micmac, corte_influencia, corte_dependencia = calcular_micmac(matriz_df, analisis_base)
 
     return {
         "catalogo": catalogo,
@@ -533,8 +544,8 @@ def procesar_archivo_excel(file):
         "instituciones": instituciones_df,
         "matriz": matriz_df,
         "analisis": df_micmac,
-        "media_influencia": media_influencia,
-        "media_dependencia": media_dependencia
+        "corte_influencia": corte_influencia,
+        "corte_dependencia": corte_dependencia
     }
 
 
@@ -542,9 +553,7 @@ def procesar_archivo_excel(file):
 # INTERFAZ
 # =========================
 st.title("MIC MAC independiente desde plantilla Excel")
-st.caption(
-    "Sube la plantilla MIC MAC. La app leerá cruces, depurará instituciones duplicadas y generará el análisis por zona."
-)
+st.caption("Sube la plantilla MIC MAC. La app leerá cruces, depurará instituciones duplicadas y generará el análisis por zona.")
 
 archivo = st.file_uploader(
     "Carga la plantilla MIC MAC en Excel",
@@ -555,19 +564,15 @@ if archivo is not None:
     try:
         resultado = procesar_archivo_excel(archivo)
 
-        catalogo = resultado["catalogo"]
         participantes_df = resultado["participantes"]
         instituciones_df = resultado["instituciones"]
         matriz_df = resultado["matriz"]
         df_micmac = resultado["analisis"]
-        media_influencia = resultado["media_influencia"]
-        media_dependencia = resultado["media_dependencia"]
+        corte_influencia = resultado["corte_influencia"]
+        corte_dependencia = resultado["corte_dependencia"]
 
         st.success("Plantilla procesada correctamente.")
 
-        # =========================
-        # RESUMEN
-        # =========================
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Problemáticas", len(df_micmac))
         c2.metric("Participantes", len(participantes_df))
@@ -576,9 +581,14 @@ if archivo is not None:
 
         st.divider()
 
-        # =========================
-        # PARTICIPANTES E INSTITUCIONES
-        # =========================
+        st.markdown("### Líneas de corte utilizadas")
+        cc1, cc2, cc3 = st.columns(3)
+        cc1.metric("Corte influencia", f"{corte_influencia:.2f}")
+        cc2.metric("Corte dependencia", f"{corte_dependencia:.2f}")
+        cc3.metric("Método", "Mediana")
+
+        st.divider()
+
         t1, t2, t3, t4 = st.tabs([
             "Participantes",
             "Instituciones",
@@ -604,9 +614,6 @@ if archivo is not None:
 
         st.divider()
 
-        # =========================
-        # LISTADO POR ZONAS
-        # =========================
         st.subheader("Ubicación de las problemáticas por zona")
 
         bloques = construir_listado_zonas(df_micmac)
@@ -621,9 +628,6 @@ if archivo is not None:
 
         st.divider()
 
-        # =========================
-        # GRAFICOS
-        # =========================
         st.subheader("Visualizaciones")
 
         col_g1, col_g2 = st.columns(2)
@@ -633,14 +637,11 @@ if archivo is not None:
             st.image(png_matriz, caption="Matriz MIC MAC", use_container_width=True)
 
         with col_g2:
-            png_mapa = generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia)
+            png_mapa = generar_png_mapa_micmac(df_micmac, corte_influencia, corte_dependencia)
             st.image(png_mapa, caption="Mapa MIC MAC", use_container_width=True)
 
         st.divider()
 
-        # =========================
-        # DESCARGAS
-        # =========================
         st.subheader("Descargas")
 
         excel_resultado = exportar_excel_resultados(
@@ -648,7 +649,9 @@ if archivo is not None:
             participantes_df=participantes_df,
             instituciones_df=instituciones_df,
             matriz_df=matriz_df,
-            df_micmac=df_micmac
+            df_micmac=df_micmac,
+            corte_influencia=corte_influencia,
+            corte_dependencia=corte_dependencia
         )
 
         d1, d2, d3 = st.columns(3)
@@ -682,5 +685,3 @@ if archivo is not None:
 
     except Exception as e:
         st.error(f"No se pudo procesar la plantilla: {e}")
-
-
