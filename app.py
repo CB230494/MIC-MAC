@@ -10,7 +10,7 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="Procesador MIC MAC masivo",
+    page_title="Procesador MIC MAC ajustado",
     layout="wide"
 )
 
@@ -22,11 +22,15 @@ COLOR_VERDE = "#2CA02C"
 COLOR_NARANJA = "#FF7F0E"
 COLOR_ROJO = "#D62728"
 COLOR_GRIS = "#7F7F7F"
+COLOR_MORADO = "#7E57C2"
 
 COLOR_CUAD_CONFLICTO = "#FDECEC"
 COLOR_CUAD_PODER = "#ECF7EC"
 COLOR_CUAD_RESULTADO = "#EAF3FB"
 COLOR_CUAD_AUTONOMA = "#FFF3E8"
+COLOR_CUAD_FRONTERA = "#F3ECFD"
+
+TOLERANCIA_DEFAULT = 2.0
 
 
 # =========================================================
@@ -56,12 +60,6 @@ def nombre_archivo_sin_extension(nombre):
     return Path(nombre).stem
 
 
-def safe_sheet_name(name, default="Hoja"):
-    limpio = re.sub(r"[:\\/*?\[\]]", "_", str(name))
-    limpio = limpio[:31].strip()
-    return limpio if limpio else default
-
-
 def color_zona(zona):
     if zona == "PODER":
         return COLOR_VERDE
@@ -71,6 +69,8 @@ def color_zona(zona):
         return COLOR_AZUL
     if zona == "AUTONOMA":
         return COLOR_NARANJA
+    if zona == "FRONTERA":
+        return COLOR_MORADO
     return COLOR_GRIS
 
 
@@ -79,7 +79,7 @@ def color_zona(zona):
 # =========================================================
 def puntuar_hoja_descriptores(xls, hoja):
     try:
-        df = pd.read_excel(xls, sheet_name=hoja, header=None, nrows=15)
+        df = pd.read_excel(xls, sheet_name=hoja, header=None, nrows=20)
     except Exception:
         return -999
 
@@ -96,7 +96,6 @@ def puntuar_hoja_descriptores(xls, hoja):
         score += 2
     if "PROBLEM" in texto:
         score += 1
-
     if "MATRIZ" in hoja.upper():
         score -= 3
 
@@ -104,16 +103,14 @@ def puntuar_hoja_descriptores(xls, hoja):
 
 
 def detectar_hoja_descriptores(xls):
-    mejores = []
-    for hoja in xls.sheet_names:
-        mejores.append((hoja, puntuar_hoja_descriptores(xls, hoja)))
+    mejores = [(hoja, puntuar_hoja_descriptores(xls, hoja)) for hoja in xls.sheet_names]
     mejores = sorted(mejores, key=lambda x: x[1], reverse=True)
     return mejores[0][0] if mejores else xls.sheet_names[0]
 
 
 def puntuar_hoja_matriz(xls, hoja):
     try:
-        df = pd.read_excel(xls, sheet_name=hoja, header=None, nrows=40)
+        df = pd.read_excel(xls, sheet_name=hoja, header=None, nrows=50)
     except Exception:
         return -999
 
@@ -128,29 +125,22 @@ def puntuar_hoja_matriz(xls, hoja):
     if "INSTITUCIÓN" in texto or "INSTITUCION" in texto:
         score += 2
 
-    # si hay muchas celdas numéricas 0-3, parece matriz
-    nums = 0
-    for x in flat:
-        if x in {"0", "1", "2", "3"}:
-            nums += 1
+    nums = sum(1 for x in flat if x in {"0", "1", "2", "3"})
     score += min(nums, 20) * 0.2
-
     return score
 
 
 def detectar_hoja_matriz(xls):
-    mejores = []
-    for hoja in xls.sheet_names:
-        mejores.append((hoja, puntuar_hoja_matriz(xls, hoja)))
+    mejores = [(hoja, puntuar_hoja_matriz(xls, hoja)) for hoja in xls.sheet_names]
     mejores = sorted(mejores, key=lambda x: x[1], reverse=True)
     return mejores[0][0] if mejores else None
 
 
 # =========================================================
-# LECTURA DE DESCRIPTORES ROBUSTA
+# DESCRIPTORES
 # =========================================================
 def detectar_header_descriptores(df_raw):
-    for i in range(min(len(df_raw), 20)):
+    for i in range(min(len(df_raw), 25)):
         fila = [limpiar_texto(x).upper() for x in df_raw.iloc[i].tolist()]
         fila_txt = " | ".join(fila)
         if "NOMBRE CORTO" in fila_txt and "DESCRIPTOR" in fila_txt:
@@ -187,11 +177,7 @@ def leer_descriptores(xls):
         )
 
     base = df[[col_codigo, col_descriptor]].copy()
-
-    if col_categoria:
-        base["CATEGORIA"] = df[col_categoria]
-    else:
-        base["CATEGORIA"] = ""
+    base["CATEGORIA"] = df[col_categoria] if col_categoria else ""
 
     base.columns = ["CODIGO", "DESCRIPTOR", "CATEGORIA"]
     base["CODIGO"] = base["CODIGO"].apply(normalizar_codigo)
@@ -213,7 +199,7 @@ def leer_descriptores(xls):
 # PARTICIPANTES / INSTITUCIONES
 # =========================================================
 def detectar_fila_participantes(df_raw):
-    for i in range(min(len(df_raw), 40)):
+    for i in range(min(len(df_raw), 50)):
         fila = [limpiar_texto(x).lower() for x in df_raw.iloc[i].tolist()]
         texto = " | ".join(fila)
         if "participante" in texto and ("institución" in texto or "institucion" in texto):
@@ -242,17 +228,19 @@ def leer_participantes_instituciones(df_raw):
     fila_header = detectar_fila_participantes(df_raw)
 
     if fila_header is None:
-        vacio1 = pd.DataFrame(columns=["PARTICIPANTE", "INSTITUCION", "PUESTO"])
-        vacio2 = pd.DataFrame(columns=["INSTITUCION"])
-        return vacio1, vacio2
+        return (
+            pd.DataFrame(columns=["PARTICIPANTE", "INSTITUCION", "PUESTO"]),
+            pd.DataFrame(columns=["INSTITUCION"])
+        )
 
     header = df_raw.iloc[fila_header].tolist()
     col_part, col_inst, col_puesto = detectar_columnas_participantes(header)
 
     if col_part is None and col_inst is None:
-        vacio1 = pd.DataFrame(columns=["PARTICIPANTE", "INSTITUCION", "PUESTO"])
-        vacio2 = pd.DataFrame(columns=["INSTITUCION"])
-        return vacio1, vacio2
+        return (
+            pd.DataFrame(columns=["PARTICIPANTE", "INSTITUCION", "PUESTO"]),
+            pd.DataFrame(columns=["INSTITUCION"])
+        )
 
     participantes = []
     i = fila_header + 1
@@ -267,7 +255,6 @@ def leer_participantes_instituciones(df_raw):
         institucion = limpiar_texto(fila[col_inst]) if col_inst is not None and col_inst < len(fila) else ""
         puesto = limpiar_texto(fila[col_puesto]) if col_puesto is not None and col_puesto < len(fila) else ""
 
-        # si la fila parece arranque de matriz, salir
         primera = limpiar_texto(fila[0]).upper() if len(fila) > 0 else ""
         if participante == "" and institucion == "" and puesto == "" and primera != "":
             break
@@ -295,7 +282,7 @@ def leer_participantes_instituciones(df_raw):
 
 
 # =========================================================
-# MATRIZ ROBUSTA
+# MATRIZ
 # =========================================================
 def fila_parece_header_matriz(fila):
     vals = [limpiar_texto(x) for x in fila]
@@ -307,17 +294,15 @@ def fila_parece_header_matriz(fila):
 
     if not es_vacio(primera):
         return False
-
     if len(resto) < 3:
         return False
 
-    # debe parecer lista de códigos cortos, no frases
     cortos = sum(1 for x in resto if len(x) <= 20)
     return cortos >= max(3, int(len(resto) * 0.7))
 
 
 def detectar_fila_encabezado_matriz(df_raw):
-    for i in range(min(len(df_raw), 80)):
+    for i in range(min(len(df_raw), 100)):
         if fila_parece_header_matriz(df_raw.iloc[i].tolist()):
             return i
     return None
@@ -397,21 +382,31 @@ def leer_matriz_micmac(df_raw, catalogo_descriptores):
 
 
 # =========================================================
-# ANALISIS MIC MAC
+# ANÁLISIS MICMAC AJUSTADO
 # =========================================================
-def clasificar_zona(inf, dep, media_inf, media_dep):
+def clasificar_zona_micmac_real(inf, dep, media_inf, media_dep, tol):
     if inf == 0 and dep == 0:
         return "SIN RELACION"
+
+    cerca_inf = abs(inf - media_inf) <= tol
+    cerca_dep = abs(dep - media_dep) <= tol
+
+    if cerca_inf or cerca_dep:
+        return "FRONTERA"
+
     if inf > media_inf and dep < media_dep:
         return "PODER"
+
     if inf > media_inf and dep > media_dep:
         return "CONFLICTO"
+
     if inf < media_inf and dep > media_dep:
         return "RESULTADO"
+
     return "AUTONOMA"
 
 
-def calcular_micmac(matriz_df, analisis_base):
+def calcular_micmac(matriz_df, analisis_base, tolerancia=TOLERANCIA_DEFAULT):
     influencia = matriz_df.sum(axis=1)
     dependencia = matriz_df.sum(axis=0)
 
@@ -423,11 +418,12 @@ def calcular_micmac(matriz_df, analisis_base):
     media_dependencia = float(df["DEPENDENCIA"].mean()) if not df.empty else 0.0
 
     df["ZONA"] = df.apply(
-        lambda row: clasificar_zona(
+        lambda row: clasificar_zona_micmac_real(
             row["INFLUENCIA"],
             row["DEPENDENCIA"],
             media_influencia,
-            media_dependencia
+            media_dependencia,
+            tolerancia
         ),
         axis=1
     )
@@ -437,7 +433,8 @@ def calcular_micmac(matriz_df, analisis_base):
         "CONFLICTO": 2,
         "RESULTADO": 3,
         "AUTONOMA": 4,
-        "SIN RELACION": 5
+        "FRONTERA": 5,
+        "SIN RELACION": 6
     }
 
     df["ORDEN_ZONA"] = df["ZONA"].map(orden_zona).fillna(99)
@@ -486,30 +483,47 @@ def generar_png_matriz(matriz_df):
     return buffer.getvalue()
 
 
-def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia):
+def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia, tolerancia):
     fig, ax = plt.subplots(figsize=(13, 8), dpi=180)
 
-    max_x = max(float(df_micmac["DEPENDENCIA"].max()), float(media_dependencia)) + 3 if not df_micmac.empty else 5
-    max_y = max(float(df_micmac["INFLUENCIA"].max()), float(media_influencia)) + 3 if not df_micmac.empty else 5
-    ymin_ratio = media_influencia / max_y if max_y > 0 else 0.5
+    max_dep = float(df_micmac["DEPENDENCIA"].max()) if not df_micmac.empty else 0
+    max_inf = float(df_micmac["INFLUENCIA"].max()) if not df_micmac.empty else 0
 
-    ax.axvspan(0, media_dependencia, ymin=ymin_ratio, ymax=1, color=COLOR_CUAD_PODER, alpha=0.55, zorder=0)
-    ax.axvspan(media_dependencia, max_x, ymin=ymin_ratio, ymax=1, color=COLOR_CUAD_CONFLICTO, alpha=0.55, zorder=0)
-    ax.axvspan(media_dependencia, max_x, ymin=0, ymax=ymin_ratio, color=COLOR_CUAD_RESULTADO, alpha=0.55, zorder=0)
-    ax.axvspan(0, media_dependencia, ymin=0, ymax=ymin_ratio, color=COLOR_CUAD_AUTONOMA, alpha=0.55, zorder=0)
+    margen_x = max(media_dependencia, max_dep - media_dependencia) + 2
+    margen_y = max(media_influencia, max_inf - media_influencia) + 2
 
-    ax.text(media_dependencia * 0.35, media_influencia + (max_y - media_influencia) * 0.90,
+    xmin = max(0, media_dependencia - margen_x)
+    xmax = media_dependencia + margen_x
+    ymin = max(0, media_influencia - margen_y)
+    ymax = media_influencia + margen_y
+
+    alto_total = ymax - ymin if ymax > ymin else 1
+    ymin_ratio = (media_influencia - ymin) / alto_total
+
+    ax.axvspan(xmin, media_dependencia, ymin=ymin_ratio, ymax=1, color=COLOR_CUAD_PODER, alpha=0.50, zorder=0)
+    ax.axvspan(media_dependencia, xmax, ymin=ymin_ratio, ymax=1, color=COLOR_CUAD_CONFLICTO, alpha=0.50, zorder=0)
+    ax.axvspan(media_dependencia, xmax, ymin=0, ymax=ymin_ratio, color=COLOR_CUAD_RESULTADO, alpha=0.50, zorder=0)
+    ax.axvspan(xmin, media_dependencia, ymin=0, ymax=ymin_ratio, color=COLOR_CUAD_AUTONOMA, alpha=0.50, zorder=0)
+
+    # Banda frontera
+    ax.axvspan(media_dependencia - tolerancia, media_dependencia + tolerancia, color=COLOR_CUAD_FRONTERA, alpha=0.30, zorder=1)
+    ax.axhspan(media_influencia - tolerancia, media_influencia + tolerancia, color=COLOR_CUAD_FRONTERA, alpha=0.30, zorder=1)
+
+    ax.text(media_dependencia - (media_dependencia - xmin) * 0.55, media_influencia + (ymax - media_influencia) * 0.85,
             "PODER", fontsize=15, fontweight="bold", color="#1B5E20",
-            ha="center", va="center", alpha=0.90)
-    ax.text(media_dependencia + (max_x - media_dependencia) * 0.50, media_influencia + (max_y - media_influencia) * 0.90,
+            ha="center", va="center", alpha=0.95)
+    ax.text(media_dependencia + (xmax - media_dependencia) * 0.45, media_influencia + (ymax - media_influencia) * 0.85,
             "CONFLICTO", fontsize=15, fontweight="bold", color="#8B1E1E",
-            ha="center", va="center", alpha=0.90)
-    ax.text(media_dependencia + (max_x - media_dependencia) * 0.50, media_influencia * 0.18,
+            ha="center", va="center", alpha=0.95)
+    ax.text(media_dependencia + (xmax - media_dependencia) * 0.45, media_influencia - (media_influencia - ymin) * 0.85,
             "RESULTADO", fontsize=15, fontweight="bold", color="#0D47A1",
-            ha="center", va="center", alpha=0.90)
-    ax.text(media_dependencia * 0.35, media_influencia * 0.18,
+            ha="center", va="center", alpha=0.95)
+    ax.text(media_dependencia - (media_dependencia - xmin) * 0.55, media_influencia - (media_influencia - ymin) * 0.85,
             "AUTÓNOMA", fontsize=15, fontweight="bold", color="#BF5A00",
-            ha="center", va="center", alpha=0.90)
+            ha="center", va="center", alpha=0.95)
+
+    ax.text(media_dependencia, ymax - 0.6, "FRONTERA", fontsize=11, fontweight="bold",
+            color=COLOR_MORADO, ha="center", va="top", alpha=0.95)
 
     for _, row in df_micmac.iterrows():
         x = float(row["DEPENDENCIA"])
@@ -519,7 +533,7 @@ def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia):
 
         ax.scatter(
             x, y,
-            s=220,
+            s=220 if z != "FRONTERA" else 250,
             color=color_zona(z),
             edgecolors="black",
             linewidths=0.8,
@@ -560,8 +574,8 @@ def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia):
     ax.set_xlabel("Dependencia", fontsize=13)
     ax.set_ylabel("Influencia", fontsize=13)
     ax.grid(True, alpha=0.25)
-    ax.set_xlim(0, max_x)
-    ax.set_ylim(0, max_y)
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
 
     buffer = io.BytesIO()
     fig.tight_layout()
@@ -580,7 +594,8 @@ def exportar_excel_individual(
     matriz_df,
     df_micmac,
     media_influencia,
-    media_dependencia
+    media_dependencia,
+    tolerancia
 ):
     salida = io.BytesIO()
 
@@ -596,7 +611,8 @@ def exportar_excel_individual(
                 "Suma total dependencia",
                 "Media influencia",
                 "Media dependencia",
-                "Método de corte"
+                "Tolerancia",
+                "Método"
             ],
             "VALOR": [
                 nombre_archivo_fuente,
@@ -608,7 +624,8 @@ def exportar_excel_individual(
                 int(df_micmac["DEPENDENCIA"].sum()) if not df_micmac.empty else 0,
                 media_influencia,
                 media_dependencia,
-                "Media aritmética"
+                tolerancia,
+                "MICMAC ajustado con frontera"
             ]
         })
         resumen.to_excel(writer, sheet_name="RESUMEN", index=False)
@@ -620,18 +637,9 @@ def exportar_excel_individual(
         matriz_export.to_excel(writer, sheet_name="MATRIZ_LIMPIA", index=False)
 
         df_micmac.to_excel(writer, sheet_name="ANALISIS_MICMAC", index=False)
-
-        zonas = []
-        for _, row in df_micmac.iterrows():
-            zonas.append({
-                "ZONA": row["ZONA"],
-                "CODIGO": row["CODIGO"],
-                "DESCRIPTOR": row["DESCRIPTOR"],
-                "CATEGORIA": row["CATEGORIA"],
-                "INFLUENCIA": row["INFLUENCIA"],
-                "DEPENDENCIA": row["DEPENDENCIA"]
-            })
-        pd.DataFrame(zonas).to_excel(writer, sheet_name="PROBLEMATICAS_POR_ZONA", index=False)
+        df_micmac[["ZONA", "CODIGO", "DESCRIPTOR", "CATEGORIA", "INFLUENCIA", "DEPENDENCIA"]].to_excel(
+            writer, sheet_name="PROBLEMATICAS_POR_ZONA", index=False
+        )
 
         hojas = {
             "RESUMEN": resumen,
@@ -639,7 +647,7 @@ def exportar_excel_individual(
             "INSTITUCIONES": instituciones_df,
             "MATRIZ_LIMPIA": matriz_export,
             "ANALISIS_MICMAC": df_micmac,
-            "PROBLEMATICAS_POR_ZONA": pd.DataFrame(zonas)
+            "PROBLEMATICAS_POR_ZONA": df_micmac[["ZONA", "CODIGO", "DESCRIPTOR", "CATEGORIA", "INFLUENCIA", "DEPENDENCIA"]]
         }
 
         for hoja, df in hojas.items():
@@ -653,83 +661,10 @@ def exportar_excel_individual(
     return salida.getvalue()
 
 
-def exportar_excel_maestro(resultados_ok, errores):
-    salida = io.BytesIO()
-
-    with pd.ExcelWriter(salida, engine="xlsxwriter") as writer:
-        resumen = []
-        analisis_all = []
-        instituciones_all = []
-        participantes_all = []
-        errores_rows = []
-
-        for r in resultados_ok:
-            resumen.append({
-                "ARCHIVO": r["archivo"],
-                "PROBLEMATICAS": len(r["analisis"]),
-                "PARTICIPANTES": len(r["participantes"]),
-                "INSTITUCIONES_UNICAS": len(r["instituciones"]),
-                "SUMA_INFLUENCIA": int(r["analisis"]["INFLUENCIA"].sum()) if not r["analisis"].empty else 0,
-                "SUMA_DEPENDENCIA": int(r["analisis"]["DEPENDENCIA"].sum()) if not r["analisis"].empty else 0,
-                "MEDIA_INFLUENCIA": r["media_influencia"],
-                "MEDIA_DEPENDENCIA": r["media_dependencia"]
-            })
-
-            df_a = r["analisis"].copy()
-            df_a.insert(0, "ARCHIVO", r["archivo"])
-            analisis_all.append(df_a)
-
-            if not r["instituciones"].empty:
-                df_i = r["instituciones"].copy()
-                df_i.insert(0, "ARCHIVO", r["archivo"])
-                instituciones_all.append(df_i)
-
-            if not r["participantes"].empty:
-                df_p = r["participantes"].copy()
-                df_p.insert(0, "ARCHIVO", r["archivo"])
-                participantes_all.append(df_p)
-
-        for e in errores:
-            errores_rows.append({
-                "ARCHIVO": e["archivo"],
-                "ERROR": e["error"]
-            })
-
-        df_resumen = pd.DataFrame(resumen)
-        df_analisis = pd.concat(analisis_all, ignore_index=True) if analisis_all else pd.DataFrame()
-        df_inst = pd.concat(instituciones_all, ignore_index=True) if instituciones_all else pd.DataFrame()
-        df_part = pd.concat(participantes_all, ignore_index=True) if participantes_all else pd.DataFrame()
-        df_err = pd.DataFrame(errores_rows)
-
-        df_resumen.to_excel(writer, sheet_name="RESUMEN_GENERAL", index=False)
-        df_analisis.to_excel(writer, sheet_name="ANALISIS_CONSOLIDADO", index=False)
-        df_inst.to_excel(writer, sheet_name="INSTITUCIONES", index=False)
-        df_part.to_excel(writer, sheet_name="PARTICIPANTES", index=False)
-        df_err.to_excel(writer, sheet_name="ERRORES", index=False)
-
-        hojas = {
-            "RESUMEN_GENERAL": df_resumen,
-            "ANALISIS_CONSOLIDADO": df_analisis,
-            "INSTITUCIONES": df_inst,
-            "PARTICIPANTES": df_part,
-            "ERRORES": df_err
-        }
-
-        for hoja, df in hojas.items():
-            ws = writer.sheets[hoja]
-            if df.empty:
-                continue
-            for idx, col in enumerate(df.columns):
-                max_len = max(len(str(col)), df[col].astype(str).map(len).max() if len(df) > 0 else 0)
-                ws.set_column(idx, idx, min(max(max_len + 2, 14), 60))
-
-    return salida.getvalue()
-
-
 # =========================================================
 # PROCESAMIENTO CENTRAL
 # =========================================================
-def procesar_archivo_excel(file):
+def procesar_archivo_excel(file, tolerancia):
     xls = pd.ExcelFile(file)
 
     hoja_matriz = detectar_hoja_matriz(xls)
@@ -741,7 +676,9 @@ def procesar_archivo_excel(file):
 
     participantes_df, instituciones_df = leer_participantes_instituciones(df_raw_matriz)
     matriz_df, analisis_base = leer_matriz_micmac(df_raw_matriz, catalogo)
-    df_micmac, media_influencia, media_dependencia = calcular_micmac(matriz_df, analisis_base)
+    df_micmac, media_influencia, media_dependencia = calcular_micmac(
+        matriz_df, analisis_base, tolerancia=tolerancia
+    )
 
     return {
         "archivo": file.name,
@@ -753,16 +690,25 @@ def procesar_archivo_excel(file):
         "matriz": matriz_df,
         "analisis": df_micmac,
         "media_influencia": media_influencia,
-        "media_dependencia": media_dependencia
+        "media_dependencia": media_dependencia,
+        "tolerancia": tolerancia
     }
 
 
 # =========================================================
 # INTERFAZ
 # =========================================================
-st.title("Procesador MIC MAC masivo desde Excel")
+st.title("Procesador MIC MAC ajustado al software")
 st.caption(
-    "Sube uno o varios archivos Excel. La app detecta automáticamente descriptores, matriz, participantes e instituciones."
+    "Sube uno o varios Excel. Esta versión usa tolerancia y zona frontera para acercarse más al comportamiento visual/analítico del software MICMAC."
+)
+
+tolerancia = st.number_input(
+    "Tolerancia de frontera",
+    min_value=0.0,
+    max_value=10.0,
+    value=TOLERANCIA_DEFAULT,
+    step=0.5
 )
 
 archivos = st.file_uploader(
@@ -780,7 +726,7 @@ if archivos:
 
     for idx, archivo in enumerate(archivos, start=1):
         try:
-            resultado = procesar_archivo_excel(archivo)
+            resultado = procesar_archivo_excel(archivo, tolerancia=tolerancia)
             resultados_ok.append(resultado)
         except Exception as e:
             errores.append({
@@ -802,34 +748,6 @@ if archivos:
 
     if resultados_ok:
         st.divider()
-        st.subheader("Resumen general")
-
-        resumen_rows = []
-        for r in resultados_ok:
-            resumen_rows.append({
-                "ARCHIVO": r["archivo"],
-                "HOJA_DESCRIPTORES": r["hoja_descriptores"],
-                "HOJA_MATRIZ": r["hoja_matriz"],
-                "PROBLEMATICAS": len(r["analisis"]),
-                "PARTICIPANTES": len(r["participantes"]),
-                "INSTITUCIONES": len(r["instituciones"]),
-                "MEDIA_INFLUENCIA": round(r["media_influencia"], 2),
-                "MEDIA_DEPENDENCIA": round(r["media_dependencia"], 2)
-            })
-
-        df_resumen = pd.DataFrame(resumen_rows)
-        st.dataframe(df_resumen, use_container_width=True, hide_index=True)
-
-        excel_maestro = exportar_excel_maestro(resultados_ok, errores)
-        st.download_button(
-            "Descargar Excel maestro consolidado",
-            data=excel_maestro,
-            file_name="MICMAC_Consolidado.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-
-        st.divider()
         st.subheader("Detalle por archivo")
 
         nombres = [r["archivo"] for r in resultados_ok]
@@ -846,7 +764,7 @@ if archivos:
         dd1, dd2, dd3 = st.columns(3)
         dd1.metric("Media influencia", f"{r['media_influencia']:.2f}")
         dd2.metric("Media dependencia", f"{r['media_dependencia']:.2f}")
-        dd3.metric("Método", "Media aritmética")
+        dd3.metric("Tolerancia", f"{r['tolerancia']:.2f}")
 
         tab1, tab2, tab3, tab4 = st.tabs([
             "Participantes",
@@ -870,7 +788,7 @@ if archivos:
         st.divider()
         st.subheader("Ubicación por zona")
 
-        for zona in ["PODER", "CONFLICTO", "RESULTADO", "AUTONOMA", "SIN RELACION"]:
+        for zona in ["PODER", "CONFLICTO", "RESULTADO", "AUTONOMA", "FRONTERA", "SIN RELACION"]:
             sub = r["analisis"][r["analisis"]["ZONA"] == zona].copy()
             if not sub.empty:
                 st.markdown(f"### {zona}")
@@ -887,17 +805,18 @@ if archivos:
         png_mapa = generar_png_mapa_micmac(
             r["analisis"],
             r["media_influencia"],
-            r["media_dependencia"]
+            r["media_dependencia"],
+            r["tolerancia"]
         )
 
         vg1, vg2 = st.columns(2)
         with vg1:
             st.image(png_matriz, caption="Matriz MIC MAC", use_container_width=True)
         with vg2:
-            st.image(png_mapa, caption="Mapa MIC MAC", use_container_width=True)
+            st.image(png_mapa, caption="Mapa MIC MAC ajustado", use_container_width=True)
 
         st.divider()
-        st.subheader("Descargas individuales")
+        st.subheader("Descargas")
 
         excel_individual = exportar_excel_individual(
             nombre_archivo_fuente=r["archivo"],
@@ -906,7 +825,8 @@ if archivos:
             matriz_df=r["matriz"],
             df_micmac=r["analisis"],
             media_influencia=r["media_influencia"],
-            media_dependencia=r["media_dependencia"]
+            media_dependencia=r["media_dependencia"],
+            tolerancia=r["tolerancia"]
         )
 
         dg1, dg2, dg3 = st.columns(3)
