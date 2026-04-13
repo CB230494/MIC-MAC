@@ -12,13 +12,24 @@ st.set_page_config(
     layout="wide"
 )
 
+# =========================
+# COLORES
+# =========================
 COLOR_AZUL = "#1F77B4"
 COLOR_VERDE = "#2CA02C"
 COLOR_NARANJA = "#FF7F0E"
 COLOR_ROJO = "#D62728"
 COLOR_GRIS = "#7F7F7F"
 
+COLOR_CUAD_CONFLICTO = "#FDECEC"
+COLOR_CUAD_PODER = "#ECF7EC"
+COLOR_CUAD_RESULTADO = "#EAF3FB"
+COLOR_CUAD_AUTONOMA = "#FFF3E8"
 
+
+# =========================
+# UTILIDADES
+# =========================
 def limpiar_texto(valor):
     if pd.isna(valor):
         return ""
@@ -34,6 +45,9 @@ def normalizar_codigo(valor):
     return limpiar_texto(valor).upper()
 
 
+# =========================
+# DESCRIPTORES
+# =========================
 def detectar_hoja_descriptores(xls):
     for hoja in xls.sheet_names:
         if "DESCRIPTOR" in hoja.upper():
@@ -84,6 +98,9 @@ def leer_descriptores(xls):
     return base
 
 
+# =========================
+# PARTICIPANTES / INSTITUCIONES
+# =========================
 def detectar_fila_participantes(df_raw):
     for i in range(len(df_raw)):
         fila = [limpiar_texto(x).lower() for x in df_raw.iloc[i].tolist()]
@@ -97,7 +114,9 @@ def leer_participantes_instituciones(df_raw):
     fila_header = detectar_fila_participantes(df_raw)
 
     if fila_header is None:
-        return pd.DataFrame(columns=["PARTICIPANTE", "INSTITUCION", "PUESTO"]), pd.DataFrame(columns=["INSTITUCION"])
+        vacio1 = pd.DataFrame(columns=["PARTICIPANTE", "INSTITUCION", "PUESTO"])
+        vacio2 = pd.DataFrame(columns=["INSTITUCION"])
+        return vacio1, vacio2
 
     participantes = []
     i = fila_header + 1
@@ -136,6 +155,9 @@ def leer_participantes_instituciones(df_raw):
     return df_part, df_inst
 
 
+# =========================
+# MATRIZ MIC MAC
+# =========================
 def detectar_hoja_matriz(xls):
     for hoja in xls.sheet_names:
         if "MATRIZ" in hoja.upper():
@@ -231,6 +253,9 @@ def leer_matriz_micmac(df_raw, catalogo_descriptores):
     return matriz_df, analisis_base
 
 
+# =========================
+# ANALISIS MIC MAC
+# =========================
 def clasificar_zona(inf, dep, media_inf, media_dep):
     if inf == 0 and dep == 0:
         return "SIN RELACION"
@@ -294,6 +319,9 @@ def construir_listado_zonas(df_micmac):
     return bloques
 
 
+# =========================
+# GRAFICOS
+# =========================
 def color_zona(zona):
     if zona == "PODER":
         return COLOR_VERDE
@@ -307,41 +335,141 @@ def color_zona(zona):
 
 
 def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia):
-    fig, ax = plt.subplots(figsize=(12, 8), dpi=200)
+    fig, ax = plt.subplots(figsize=(14, 9), dpi=200)
+
+    max_x = max(float(df_micmac["DEPENDENCIA"].max()), float(media_dependencia)) + 3 if not df_micmac.empty else 5
+    max_y = max(float(df_micmac["INFLUENCIA"].max()), float(media_influencia)) + 3 if not df_micmac.empty else 5
+
+    # Fondos por cuadrante
+    ax.axvspan(0, media_dependencia, ymin=media_influencia / max_y, ymax=1, color=COLOR_CUAD_PODER, alpha=0.55, zorder=0)
+    ax.axvspan(media_dependencia, max_x, ymin=media_influencia / max_y, ymax=1, color=COLOR_CUAD_CONFLICTO, alpha=0.55, zorder=0)
+    ax.axvspan(media_dependencia, max_x, ymin=0, ymax=media_influencia / max_y, color=COLOR_CUAD_RESULTADO, alpha=0.55, zorder=0)
+    ax.axvspan(0, media_dependencia, ymin=0, ymax=media_influencia / max_y, color=COLOR_CUAD_AUTONOMA, alpha=0.55, zorder=0)
+
+    # Títulos de cuadrantes
+    ax.text(
+        media_dependencia * 0.35,
+        media_influencia + (max_y - media_influencia) * 0.90,
+        "PODER",
+        fontsize=16,
+        fontweight="bold",
+        color="#1B5E20",
+        ha="center",
+        va="center",
+        alpha=0.90
+    )
+    ax.text(
+        media_dependencia + (max_x - media_dependencia) * 0.50,
+        media_influencia + (max_y - media_influencia) * 0.90,
+        "CONFLICTO",
+        fontsize=16,
+        fontweight="bold",
+        color="#8B1E1E",
+        ha="center",
+        va="center",
+        alpha=0.90
+    )
+    ax.text(
+        media_dependencia + (max_x - media_dependencia) * 0.50,
+        media_influencia * 0.18,
+        "RESULTADO",
+        fontsize=16,
+        fontweight="bold",
+        color="#0D47A1",
+        ha="center",
+        va="center",
+        alpha=0.90
+    )
+    ax.text(
+        media_dependencia * 0.35,
+        media_influencia * 0.18,
+        "AUTÓNOMA",
+        fontsize=16,
+        fontweight="bold",
+        color="#BF5A00",
+        ha="center",
+        va="center",
+        alpha=0.90
+    )
+
+    offsets = {
+        "BUNKER": (0.20, 0.45),
+        "DESEMPLE": (0.15, 0.35),
+        "CON.DROG": (0.15, 0.35),
+        "CON.ALCO": (0.15, 0.25),
+        "VEN.DROG": (0.15, 0.25),
+        "PER.CALLE": (0.15, 0.20),
+        "OCIO": (0.15, 0.20),
+        "VIO.INTR": (0.15, 0.20),
+        "HURT.": (0.15, 0.20),
+        "DISTURB": (0.15, 0.20),
+        "ROB.PERS": (0.15, 0.20),
+        "AGR.ARMA": (0.15, 0.20),
+        "DAÑOS": (0.15, 0.20),
+        "FAL.INVE": (0.15, 0.20),
+        "CON.TEME": (0.15, 0.20),
+        "ROB.VIVI": (0.15, 0.20),
+        "ROB.VEHI": (0.15, 0.20),
+        "TACH.VIV": (0.15, 0.20),
+        "TACH.COM": (0.15, 0.20),
+        "TACH.VEH": (0.15, 0.20),
+        "ASAL.COM": (0.15, 0.20),
+        "ESTAFA": (0.15, 0.20),
+        "DEF.INFR": (0.15, 0.20),
+        "CON.SONI": (0.15, 0.20),
+    }
 
     for _, row in df_micmac.iterrows():
-        x = row["DEPENDENCIA"]
-        y = row["INFLUENCIA"]
+        x = float(row["DEPENDENCIA"])
+        y = float(row["INFLUENCIA"])
         z = row["ZONA"]
+        codigo = row["CODIGO"]
 
         ax.scatter(
             x, y,
-            s=180,
+            s=250,
             color=color_zona(z),
             edgecolors="black",
-            linewidths=0.7,
-            alpha=0.9
+            linewidths=0.9,
+            alpha=0.92,
+            zorder=3
         )
 
-        ax.text(
-            x + 0.12,
-            y + 0.12,
-            row["CODIGO"],
+        dx, dy = offsets.get(codigo, (0.15, 0.18))
+
+        ax.annotate(
+            codigo,
+            xy=(x, y),
+            xytext=(x + dx, y + dy),
+            textcoords="data",
             fontsize=8,
             ha="left",
-            va="bottom"
+            va="center",
+            bbox=dict(
+                boxstyle="square,pad=0.10",
+                fc="#F7F2D8",
+                ec="#8E8E8E",
+                lw=0.8
+            ),
+            arrowprops=dict(
+                arrowstyle="-",
+                color="#6E6E6E",
+                lw=0.8,
+                shrinkA=0,
+                shrinkB=0
+            ),
+            zorder=4
         )
 
-    ax.axvline(media_dependencia, linestyle="--", color="gray", linewidth=1)
-    ax.axhline(media_influencia, linestyle="--", color="gray", linewidth=1)
+    # Líneas de corte
+    ax.axvline(media_dependencia, linestyle="--", color="#6F6F6F", linewidth=1.3, zorder=2)
+    ax.axhline(media_influencia, linestyle="--", color="#6F6F6F", linewidth=1.3, zorder=2)
 
-    ax.set_title("Mapa MIC MAC", fontsize=18)
-    ax.set_xlabel("Dependencia")
-    ax.set_ylabel("Influencia")
+    ax.set_title("Mapa MIC MAC", fontsize=20, fontweight="bold")
+    ax.set_xlabel("Dependencia", fontsize=14)
+    ax.set_ylabel("Influencia", fontsize=14)
     ax.grid(True, alpha=0.25)
 
-    max_x = max(float(df_micmac["DEPENDENCIA"].max()), float(media_dependencia)) + 2 if not df_micmac.empty else 5
-    max_y = max(float(df_micmac["INFLUENCIA"].max()), float(media_influencia)) + 2 if not df_micmac.empty else 5
     ax.set_xlim(0, max_x)
     ax.set_ylim(0, max_y)
 
@@ -353,8 +481,8 @@ def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia):
 
 
 def generar_png_matriz(matriz_df):
-    fig_w = max(8, len(matriz_df.columns) * 0.45)
-    fig_h = max(6, len(matriz_df.index) * 0.42)
+    fig_w = max(10, len(matriz_df.columns) * 0.55)
+    fig_h = max(8, len(matriz_df.index) * 0.50)
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=200)
 
@@ -363,8 +491,8 @@ def generar_png_matriz(matriz_df):
 
     ax.set_xticks(np.arange(len(matriz_df.columns)))
     ax.set_yticks(np.arange(len(matriz_df.index)))
-    ax.set_xticklabels(matriz_df.columns.tolist(), rotation=45, ha="right", fontsize=8)
-    ax.set_yticklabels(matriz_df.index.tolist(), fontsize=8)
+    ax.set_xticklabels(matriz_df.columns.tolist(), rotation=45, ha="right", fontsize=9)
+    ax.set_yticklabels(matriz_df.index.tolist(), fontsize=9)
 
     for i in range(arr.shape[0]):
         for j in range(arr.shape[1]):
@@ -376,7 +504,7 @@ def generar_png_matriz(matriz_df):
                 fontsize=7
             )
 
-    ax.set_title("Matriz MIC MAC", fontsize=16)
+    ax.set_title("Matriz MIC MAC", fontsize=18, fontweight="bold")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     buffer = io.BytesIO()
@@ -386,6 +514,9 @@ def generar_png_matriz(matriz_df):
     return buffer.getvalue()
 
 
+# =========================
+# EXPORTAR EXCEL
+# =========================
 def exportar_excel_resultados(
     nombre_archivo_fuente,
     participantes_df,
@@ -476,6 +607,9 @@ def exportar_excel_resultados(
     return salida.getvalue()
 
 
+# =========================
+# PROCESAMIENTO CENTRAL
+# =========================
 def procesar_archivo_excel(file):
     xls = pd.ExcelFile(file)
 
@@ -499,6 +633,9 @@ def procesar_archivo_excel(file):
     }
 
 
+# =========================
+# INTERFAZ
+# =========================
 st.title("MIC MAC independiente desde plantilla Excel")
 st.caption("Sube la plantilla MIC MAC. La app leerá cruces, depurará instituciones duplicadas y generará el análisis por zona.")
 
@@ -584,7 +721,7 @@ if archivo is not None:
 
         with col_g2:
             png_mapa = generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia)
-            st.image(png_mapa, caption="Mapa MIC MAC", use_container_width=True)
+            st.image(png_mapa, caption="Mapa MIC MAC por cuadrantes", use_container_width=True)
 
         st.divider()
 
