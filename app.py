@@ -10,7 +10,7 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="Procesador MIC MAC ajustado",
+    page_title="Procesador MIC MAC",
     layout="wide"
 )
 
@@ -22,15 +22,11 @@ COLOR_VERDE = "#2CA02C"
 COLOR_NARANJA = "#FF7F0E"
 COLOR_ROJO = "#D62728"
 COLOR_GRIS = "#7F7F7F"
-COLOR_MORADO = "#7E57C2"
 
 COLOR_CUAD_CONFLICTO = "#FDECEC"
 COLOR_CUAD_PODER = "#ECF7EC"
 COLOR_CUAD_RESULTADO = "#EAF3FB"
 COLOR_CUAD_AUTONOMA = "#FFF3E8"
-COLOR_CUAD_FRONTERA = "#F3ECFD"
-
-TOLERANCIA_DEFAULT = 2.0
 
 
 # =========================================================
@@ -69,8 +65,6 @@ def color_zona(zona):
         return COLOR_AZUL
     if zona == "AUTONOMA":
         return COLOR_NARANJA
-    if zona == "FRONTERA":
-        return COLOR_MORADO
     return COLOR_GRIS
 
 
@@ -382,31 +376,21 @@ def leer_matriz_micmac(df_raw, catalogo_descriptores):
 
 
 # =========================================================
-# ANÁLISIS MICMAC AJUSTADO
+# ANÁLISIS MICMAC CLÁSICO - SOLO 4 CUADRANTES
 # =========================================================
-def clasificar_zona_micmac_real(inf, dep, media_inf, media_dep, tol):
+def clasificar_zona(inf, dep, media_inf, media_dep):
     if inf == 0 and dep == 0:
         return "SIN RELACION"
-
-    cerca_inf = abs(inf - media_inf) <= tol
-    cerca_dep = abs(dep - media_dep) <= tol
-
-    if cerca_inf or cerca_dep:
-        return "FRONTERA"
-
     if inf > media_inf and dep < media_dep:
         return "PODER"
-
     if inf > media_inf and dep > media_dep:
         return "CONFLICTO"
-
     if inf < media_inf and dep > media_dep:
         return "RESULTADO"
-
     return "AUTONOMA"
 
 
-def calcular_micmac(matriz_df, analisis_base, tolerancia=TOLERANCIA_DEFAULT):
+def calcular_micmac(matriz_df, analisis_base):
     influencia = matriz_df.sum(axis=1)
     dependencia = matriz_df.sum(axis=0)
 
@@ -418,12 +402,11 @@ def calcular_micmac(matriz_df, analisis_base, tolerancia=TOLERANCIA_DEFAULT):
     media_dependencia = float(df["DEPENDENCIA"].mean()) if not df.empty else 0.0
 
     df["ZONA"] = df.apply(
-        lambda row: clasificar_zona_micmac_real(
+        lambda row: clasificar_zona(
             row["INFLUENCIA"],
             row["DEPENDENCIA"],
             media_influencia,
-            media_dependencia,
-            tolerancia
+            media_dependencia
         ),
         axis=1
     )
@@ -433,8 +416,7 @@ def calcular_micmac(matriz_df, analisis_base, tolerancia=TOLERANCIA_DEFAULT):
         "CONFLICTO": 2,
         "RESULTADO": 3,
         "AUTONOMA": 4,
-        "FRONTERA": 5,
-        "SIN RELACION": 6
+        "SIN RELACION": 5
     }
 
     df["ORDEN_ZONA"] = df["ZONA"].map(orden_zona).fillna(99)
@@ -483,7 +465,7 @@ def generar_png_matriz(matriz_df):
     return buffer.getvalue()
 
 
-def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia, tolerancia):
+def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia):
     fig, ax = plt.subplots(figsize=(13, 8), dpi=180)
 
     max_dep = float(df_micmac["DEPENDENCIA"].max()) if not df_micmac.empty else 0
@@ -505,25 +487,50 @@ def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia, tole
     ax.axvspan(media_dependencia, xmax, ymin=0, ymax=ymin_ratio, color=COLOR_CUAD_RESULTADO, alpha=0.50, zorder=0)
     ax.axvspan(xmin, media_dependencia, ymin=0, ymax=ymin_ratio, color=COLOR_CUAD_AUTONOMA, alpha=0.50, zorder=0)
 
-    # Banda frontera
-    ax.axvspan(media_dependencia - tolerancia, media_dependencia + tolerancia, color=COLOR_CUAD_FRONTERA, alpha=0.30, zorder=1)
-    ax.axhspan(media_influencia - tolerancia, media_influencia + tolerancia, color=COLOR_CUAD_FRONTERA, alpha=0.30, zorder=1)
-
-    ax.text(media_dependencia - (media_dependencia - xmin) * 0.55, media_influencia + (ymax - media_influencia) * 0.85,
-            "PODER", fontsize=15, fontweight="bold", color="#1B5E20",
-            ha="center", va="center", alpha=0.95)
-    ax.text(media_dependencia + (xmax - media_dependencia) * 0.45, media_influencia + (ymax - media_influencia) * 0.85,
-            "CONFLICTO", fontsize=15, fontweight="bold", color="#8B1E1E",
-            ha="center", va="center", alpha=0.95)
-    ax.text(media_dependencia + (xmax - media_dependencia) * 0.45, media_influencia - (media_influencia - ymin) * 0.85,
-            "RESULTADO", fontsize=15, fontweight="bold", color="#0D47A1",
-            ha="center", va="center", alpha=0.95)
-    ax.text(media_dependencia - (media_dependencia - xmin) * 0.55, media_influencia - (media_influencia - ymin) * 0.85,
-            "AUTÓNOMA", fontsize=15, fontweight="bold", color="#BF5A00",
-            ha="center", va="center", alpha=0.95)
-
-    ax.text(media_dependencia, ymax - 0.6, "FRONTERA", fontsize=11, fontweight="bold",
-            color=COLOR_MORADO, ha="center", va="top", alpha=0.95)
+    ax.text(
+        media_dependencia - (media_dependencia - xmin) * 0.55,
+        media_influencia + (ymax - media_influencia) * 0.85,
+        "PODER",
+        fontsize=15,
+        fontweight="bold",
+        color="#1B5E20",
+        ha="center",
+        va="center",
+        alpha=0.95
+    )
+    ax.text(
+        media_dependencia + (xmax - media_dependencia) * 0.45,
+        media_influencia + (ymax - media_influencia) * 0.85,
+        "CONFLICTO",
+        fontsize=15,
+        fontweight="bold",
+        color="#8B1E1E",
+        ha="center",
+        va="center",
+        alpha=0.95
+    )
+    ax.text(
+        media_dependencia + (xmax - media_dependencia) * 0.45,
+        media_influencia - (media_influencia - ymin) * 0.85,
+        "RESULTADO",
+        fontsize=15,
+        fontweight="bold",
+        color="#0D47A1",
+        ha="center",
+        va="center",
+        alpha=0.95
+    )
+    ax.text(
+        media_dependencia - (media_dependencia - xmin) * 0.55,
+        media_influencia - (media_influencia - ymin) * 0.85,
+        "AUTÓNOMA",
+        fontsize=15,
+        fontweight="bold",
+        color="#BF5A00",
+        ha="center",
+        va="center",
+        alpha=0.95
+    )
 
     for _, row in df_micmac.iterrows():
         x = float(row["DEPENDENCIA"])
@@ -533,7 +540,7 @@ def generar_png_mapa_micmac(df_micmac, media_influencia, media_dependencia, tole
 
         ax.scatter(
             x, y,
-            s=220 if z != "FRONTERA" else 250,
+            s=220,
             color=color_zona(z),
             edgecolors="black",
             linewidths=0.8,
@@ -594,8 +601,7 @@ def exportar_excel_individual(
     matriz_df,
     df_micmac,
     media_influencia,
-    media_dependencia,
-    tolerancia
+    media_dependencia
 ):
     salida = io.BytesIO()
 
@@ -611,7 +617,6 @@ def exportar_excel_individual(
                 "Suma total dependencia",
                 "Media influencia",
                 "Media dependencia",
-                "Tolerancia",
                 "Método"
             ],
             "VALOR": [
@@ -624,8 +629,7 @@ def exportar_excel_individual(
                 int(df_micmac["DEPENDENCIA"].sum()) if not df_micmac.empty else 0,
                 media_influencia,
                 media_dependencia,
-                tolerancia,
-                "MICMAC ajustado con frontera"
+                "MICMAC clásico - 4 cuadrantes"
             ]
         })
         resumen.to_excel(writer, sheet_name="RESUMEN", index=False)
@@ -664,7 +668,7 @@ def exportar_excel_individual(
 # =========================================================
 # PROCESAMIENTO CENTRAL
 # =========================================================
-def procesar_archivo_excel(file, tolerancia):
+def procesar_archivo_excel(file):
     xls = pd.ExcelFile(file)
 
     hoja_matriz = detectar_hoja_matriz(xls)
@@ -676,9 +680,7 @@ def procesar_archivo_excel(file, tolerancia):
 
     participantes_df, instituciones_df = leer_participantes_instituciones(df_raw_matriz)
     matriz_df, analisis_base = leer_matriz_micmac(df_raw_matriz, catalogo)
-    df_micmac, media_influencia, media_dependencia = calcular_micmac(
-        matriz_df, analisis_base, tolerancia=tolerancia
-    )
+    df_micmac, media_influencia, media_dependencia = calcular_micmac(matriz_df, analisis_base)
 
     return {
         "archivo": file.name,
@@ -690,25 +692,16 @@ def procesar_archivo_excel(file, tolerancia):
         "matriz": matriz_df,
         "analisis": df_micmac,
         "media_influencia": media_influencia,
-        "media_dependencia": media_dependencia,
-        "tolerancia": tolerancia
+        "media_dependencia": media_dependencia
     }
 
 
 # =========================================================
 # INTERFAZ
 # =========================================================
-st.title("Procesador MIC MAC ajustado al software")
+st.title("Procesador MIC MAC")
 st.caption(
-    "Sube uno o varios Excel. Esta versión usa tolerancia y zona frontera para acercarse más al comportamiento visual/analítico del software MICMAC."
-)
-
-tolerancia = st.number_input(
-    "Tolerancia de frontera",
-    min_value=0.0,
-    max_value=10.0,
-    value=TOLERANCIA_DEFAULT,
-    step=0.5
+    "Sube uno o varios Excel. Esta versión usa únicamente los 4 cuadrantes clásicos: Poder, Conflicto, Resultado y Autónoma."
 )
 
 archivos = st.file_uploader(
@@ -726,7 +719,7 @@ if archivos:
 
     for idx, archivo in enumerate(archivos, start=1):
         try:
-            resultado = procesar_archivo_excel(archivo, tolerancia=tolerancia)
+            resultado = procesar_archivo_excel(archivo)
             resultados_ok.append(resultado)
         except Exception as e:
             errores.append({
@@ -764,7 +757,7 @@ if archivos:
         dd1, dd2, dd3 = st.columns(3)
         dd1.metric("Media influencia", f"{r['media_influencia']:.2f}")
         dd2.metric("Media dependencia", f"{r['media_dependencia']:.2f}")
-        dd3.metric("Tolerancia", f"{r['tolerancia']:.2f}")
+        dd3.metric("Método", "4 cuadrantes")
 
         tab1, tab2, tab3, tab4 = st.tabs([
             "Participantes",
@@ -788,7 +781,7 @@ if archivos:
         st.divider()
         st.subheader("Ubicación por zona")
 
-        for zona in ["PODER", "CONFLICTO", "RESULTADO", "AUTONOMA", "FRONTERA", "SIN RELACION"]:
+        for zona in ["PODER", "CONFLICTO", "RESULTADO", "AUTONOMA", "SIN RELACION"]:
             sub = r["analisis"][r["analisis"]["ZONA"] == zona].copy()
             if not sub.empty:
                 st.markdown(f"### {zona}")
@@ -805,15 +798,14 @@ if archivos:
         png_mapa = generar_png_mapa_micmac(
             r["analisis"],
             r["media_influencia"],
-            r["media_dependencia"],
-            r["tolerancia"]
+            r["media_dependencia"]
         )
 
         vg1, vg2 = st.columns(2)
         with vg1:
             st.image(png_matriz, caption="Matriz MIC MAC", use_container_width=True)
         with vg2:
-            st.image(png_mapa, caption="Mapa MIC MAC ajustado", use_container_width=True)
+            st.image(png_mapa, caption="Mapa MIC MAC", use_container_width=True)
 
         st.divider()
         st.subheader("Descargas")
@@ -825,8 +817,7 @@ if archivos:
             matriz_df=r["matriz"],
             df_micmac=r["analisis"],
             media_influencia=r["media_influencia"],
-            media_dependencia=r["media_dependencia"],
-            tolerancia=r["tolerancia"]
+            media_dependencia=r["media_dependencia"]
         )
 
         dg1, dg2, dg3 = st.columns(3)
