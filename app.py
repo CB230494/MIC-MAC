@@ -348,6 +348,7 @@ def leer_matriz_micmac(df_raw, catalogo_descriptores):
 
 # =========================================================
 # INFLUENCIAS POR COLUMNA
+# LECTURA: FILA -> COLUMNA
 # =========================================================
 def construir_influencias_por_columna(matriz_df, analisis_base):
     if matriz_df is None or matriz_df.empty:
@@ -357,7 +358,7 @@ def construir_influencias_por_columna(matriz_df, analisis_base):
         ])
         vacio_res = pd.DataFrame(columns=[
             "COLUMNA_CODIGO", "COLUMNA_DESCRIPTOR", "COLUMNA_CATEGORIA",
-            "INFLUYEN_3", "INFLUYEN_2"
+            "INFLUYEN_3", "DESCRIPTORES_3", "INFLUYEN_2", "DESCRIPTORES_2"
         ])
         return vacio_det, vacio_res
 
@@ -445,6 +446,115 @@ def exportar_excel_individual(
     salida = io.BytesIO()
 
     with pd.ExcelWriter(salida, engine="xlsxwriter") as writer:
+        wb = writer.book
+
+        fmt_titulo = wb.add_format({
+            "bold": True,
+            "font_size": 14,
+            "font_color": "white",
+            "bg_color": "#0B3954",
+            "align": "center",
+            "valign": "vcenter",
+            "border": 1
+        })
+
+        fmt_head = wb.add_format({
+            "bold": True,
+            "font_color": "white",
+            "bg_color": "#1F5F8B",
+            "align": "center",
+            "valign": "vcenter",
+            "border": 1,
+            "text_wrap": True
+        })
+
+        fmt_head_verde = wb.add_format({
+            "bold": True,
+            "font_color": "white",
+            "bg_color": "#1B9E77",
+            "align": "center",
+            "valign": "vcenter",
+            "border": 1,
+            "text_wrap": True
+        })
+
+        fmt_head_naranja = wb.add_format({
+            "bold": True,
+            "font_color": "white",
+            "bg_color": "#E67E22",
+            "align": "center",
+            "valign": "vcenter",
+            "border": 1,
+            "text_wrap": True
+        })
+
+        fmt_texto = wb.add_format({
+            "border": 1,
+            "valign": "top",
+            "text_wrap": True
+        })
+
+        fmt_texto_centro = wb.add_format({
+            "border": 1,
+            "align": "center",
+            "valign": "vcenter",
+            "text_wrap": True
+        })
+
+        fmt_texto_gris = wb.add_format({
+            "border": 1,
+            "valign": "top",
+            "text_wrap": True,
+            "bg_color": "#F3F4F6"
+        })
+
+        fmt_valor_3 = wb.add_format({
+            "border": 1,
+            "align": "center",
+            "valign": "vcenter",
+            "bold": True,
+            "font_color": "white",
+            "bg_color": "#1B9E77"
+        })
+
+        fmt_valor_2 = wb.add_format({
+            "border": 1,
+            "align": "center",
+            "valign": "vcenter",
+            "bold": True,
+            "font_color": "white",
+            "bg_color": "#E67E22"
+        })
+
+        fmt_resumen_label = wb.add_format({
+            "bold": True,
+            "bg_color": "#EAF3FB",
+            "border": 1,
+            "text_wrap": True
+        })
+
+        fmt_resumen_value = wb.add_format({
+            "border": 1,
+            "text_wrap": True
+        })
+
+        participantes_df = participantes_df.copy()
+        instituciones_df = instituciones_df.copy()
+        influencias_detalle_df = influencias_detalle_df.copy()
+        influencias_resumen_df = influencias_resumen_df.copy()
+
+        if not influencias_detalle_df.empty:
+            influencias_detalle_df = influencias_detalle_df.sort_values(
+                by=["COLUMNA_DESCRIPTOR", "VALOR", "FILA_DESCRIPTOR"],
+                ascending=[True, False, True]
+            ).reset_index(drop=True)
+
+        if not influencias_resumen_df.empty:
+            influencias_resumen_df = influencias_resumen_df.sort_values(
+                by=["COLUMNA_DESCRIPTOR"],
+                ascending=[True]
+            ).reset_index(drop=True)
+
         resumen = pd.DataFrame({
             "CAMPO": [
                 "Archivo fuente",
@@ -464,27 +574,165 @@ def exportar_excel_individual(
             ]
         })
 
-        resumen.to_excel(writer, sheet_name="RESUMEN", index=False)
-        participantes_df.to_excel(writer, sheet_name="ACTORES", index=False)
-        instituciones_df.to_excel(writer, sheet_name="INSTITUCIONES", index=False)
-        influencias_resumen_df.to_excel(writer, sheet_name="INFLUYENCIAS_RESUMEN", index=False)
-        influencias_detalle_df.to_excel(writer, sheet_name="INFLUYENCIAS_DETALLE", index=False)
+        # RESUMEN
+        ws_res = wb.add_worksheet("RESUMEN")
+        writer.sheets["RESUMEN"] = ws_res
 
-        hojas = {
-            "RESUMEN": resumen,
-            "ACTORES": participantes_df,
-            "INSTITUCIONES": instituciones_df,
-            "INFLUYENCIAS_RESUMEN": influencias_resumen_df,
-            "INFLUYENCIAS_DETALLE": influencias_detalle_df
-        }
+        ws_res.merge_range("A1:B1", "RESUMEN DEL PROCESAMIENTO", fmt_titulo)
+        ws_res.write("A3", "CAMPO", fmt_head)
+        ws_res.write("B3", "VALOR", fmt_head)
 
-        for hoja, df in hojas.items():
-            ws = writer.sheets[hoja]
-            if df.empty:
-                continue
-            for idx, col in enumerate(df.columns):
-                max_len = max(len(str(col)), df[col].astype(str).map(len).max() if len(df) > 0 else 0)
-                ws.set_column(idx, idx, min(max(max_len + 2, 14), 60))
+        for i, (_, row) in enumerate(resumen.iterrows(), start=3):
+            ws_res.write(i, 0, row["CAMPO"], fmt_resumen_label)
+            ws_res.write(i, 1, row["VALOR"], fmt_resumen_value)
+
+        ws_res.set_column("A:A", 35)
+        ws_res.set_column("B:B", 35)
+        ws_res.freeze_panes(3, 0)
+
+        # ACTORES
+        ws_act = wb.add_worksheet("ACTORES")
+        writer.sheets["ACTORES"] = ws_act
+
+        ws_act.merge_range("A1:C1", "LISTA DE ACTORES / PARTICIPANTES", fmt_titulo)
+
+        headers_act = ["PARTICIPANTE", "INSTITUCIÓN", "PUESTO / CARGO"]
+        for col, h in enumerate(headers_act):
+            ws_act.write(2, col, h, fmt_head)
+
+        if participantes_df.empty:
+            ws_act.write(3, 0, "Sin datos", fmt_texto_gris)
+        else:
+            for r_idx, (_, row) in enumerate(participantes_df.iterrows(), start=3):
+                ws_act.write(r_idx, 0, row.get("PARTICIPANTE", ""), fmt_texto)
+                ws_act.write(r_idx, 1, row.get("INSTITUCION", ""), fmt_texto)
+                ws_act.write(r_idx, 2, row.get("PUESTO", ""), fmt_texto)
+
+            last_row = len(participantes_df) + 2
+            ws_act.autofilter(2, 0, last_row, 2)
+
+        ws_act.set_column("A:A", 32)
+        ws_act.set_column("B:B", 34)
+        ws_act.set_column("C:C", 30)
+        ws_act.freeze_panes(3, 0)
+
+        # INSTITUCIONES
+        ws_inst = wb.add_worksheet("INSTITUCIONES")
+        writer.sheets["INSTITUCIONES"] = ws_inst
+
+        ws_inst.write("A1", "INSTITUCIONES IDENTIFICADAS", fmt_titulo)
+        ws_inst.write("A3", "INSTITUCIÓN", fmt_head)
+
+        if instituciones_df.empty:
+            ws_inst.write(3, 0, "Sin datos", fmt_texto_gris)
+        else:
+            for r_idx, (_, row) in enumerate(instituciones_df.iterrows(), start=3):
+                ws_inst.write(r_idx, 0, row.get("INSTITUCION", ""), fmt_texto)
+
+            last_row = len(instituciones_df) + 2
+            ws_inst.autofilter(2, 0, last_row, 0)
+
+        ws_inst.set_column("A:A", 40)
+        ws_inst.freeze_panes(3, 0)
+
+        # INFLUYENCIAS RESUMEN
+        ws_ir = wb.add_worksheet("INFLUYENCIAS_RESUMEN")
+        writer.sheets["INFLUYENCIAS_RESUMEN"] = ws_ir
+
+        ws_ir.merge_range("A1:G1", "RESUMEN DE INFLUENCIAS FILA → COLUMNA", fmt_titulo)
+
+        headers_ir = [
+            "CÓDIGO COLUMNA",
+            "DESCRIPTOR COLUMNA",
+            "CATEGORÍA",
+            "INFLUYEN CON 3",
+            "DESCRIPTORES CON 3",
+            "INFLUYEN CON 2",
+            "DESCRIPTORES CON 2"
+        ]
+
+        formatos_headers_ir = [
+            fmt_head, fmt_head, fmt_head,
+            fmt_head_verde, fmt_head_verde,
+            fmt_head_naranja, fmt_head_naranja
+        ]
+
+        for col, h in enumerate(headers_ir):
+            ws_ir.write(2, col, h, formatos_headers_ir[col])
+
+        if influencias_resumen_df.empty:
+            ws_ir.write(3, 0, "Sin datos", fmt_texto_gris)
+        else:
+            for r_idx, (_, row) in enumerate(influencias_resumen_df.iterrows(), start=3):
+                ws_ir.write(r_idx, 0, row.get("COLUMNA_CODIGO", ""), fmt_texto_centro)
+                ws_ir.write(r_idx, 1, row.get("COLUMNA_DESCRIPTOR", ""), fmt_texto)
+                ws_ir.write(r_idx, 2, row.get("COLUMNA_CATEGORIA", ""), fmt_texto)
+                ws_ir.write(r_idx, 3, row.get("INFLUYEN_3", ""), fmt_texto)
+                ws_ir.write(r_idx, 4, row.get("DESCRIPTORES_3", ""), fmt_texto)
+                ws_ir.write(r_idx, 5, row.get("INFLUYEN_2", ""), fmt_texto)
+                ws_ir.write(r_idx, 6, row.get("DESCRIPTORES_2", ""), fmt_texto)
+
+            last_row = len(influencias_resumen_df) + 2
+            ws_ir.autofilter(2, 0, last_row, 6)
+
+        ws_ir.set_column("A:A", 18)
+        ws_ir.set_column("B:B", 32)
+        ws_ir.set_column("C:C", 24)
+        ws_ir.set_column("D:D", 28)
+        ws_ir.set_column("E:E", 40)
+        ws_ir.set_column("F:F", 28)
+        ws_ir.set_column("G:G", 40)
+        ws_ir.freeze_panes(3, 0)
+
+        # INFLUYENCIAS DETALLE
+        ws_id = wb.add_worksheet("INFLUYENCIAS_DETALLE")
+        writer.sheets["INFLUYENCIAS_DETALLE"] = ws_id
+
+        ws_id.merge_range("A1:G1", "DETALLE DE INFLUENCIAS FILA → COLUMNA", fmt_titulo)
+
+        headers_id = [
+            "CÓDIGO COLUMNA",
+            "DESCRIPTOR COLUMNA",
+            "CATEGORÍA COLUMNA",
+            "CÓDIGO FILA",
+            "DESCRIPTOR FILA",
+            "CATEGORÍA FILA",
+            "VALOR"
+        ]
+
+        for col, h in enumerate(headers_id):
+            ws_id.write(2, col, h, fmt_head)
+
+        if influencias_detalle_df.empty:
+            ws_id.write(3, 0, "Sin datos", fmt_texto_gris)
+        else:
+            for r_idx, (_, row) in enumerate(influencias_detalle_df.iterrows(), start=3):
+                ws_id.write(r_idx, 0, row.get("COLUMNA_CODIGO", ""), fmt_texto_centro)
+                ws_id.write(r_idx, 1, row.get("COLUMNA_DESCRIPTOR", ""), fmt_texto)
+                ws_id.write(r_idx, 2, row.get("COLUMNA_CATEGORIA", ""), fmt_texto)
+                ws_id.write(r_idx, 3, row.get("FILA_CODIGO", ""), fmt_texto_centro)
+                ws_id.write(r_idx, 4, row.get("FILA_DESCRIPTOR", ""), fmt_texto)
+                ws_id.write(r_idx, 5, row.get("FILA_CATEGORIA", ""), fmt_texto)
+
+                valor = row.get("VALOR", "")
+                if valor == 3:
+                    ws_id.write(r_idx, 6, valor, fmt_valor_3)
+                elif valor == 2:
+                    ws_id.write(r_idx, 6, valor, fmt_valor_2)
+                else:
+                    ws_id.write(r_idx, 6, valor, fmt_texto_centro)
+
+            last_row = len(influencias_detalle_df) + 2
+            ws_id.autofilter(2, 0, last_row, 6)
+
+        ws_id.set_column("A:A", 18)
+        ws_id.set_column("B:B", 30)
+        ws_id.set_column("C:C", 24)
+        ws_id.set_column("D:D", 16)
+        ws_id.set_column("E:E", 30)
+        ws_id.set_column("F:F", 24)
+        ws_id.set_column("G:G", 10)
+        ws_id.freeze_panes(3, 0)
 
     return salida.getvalue()
 
@@ -514,10 +762,8 @@ def procesar_archivo_excel(file):
         "archivo": file.name,
         "hoja_descriptores": hoja_desc,
         "hoja_matriz": hoja_matriz,
-        "catalogo": catalogo,
         "participantes": participantes_df,
         "instituciones": instituciones_df,
-        "matriz": matriz_df,
         "influencias_detalle": influencias_detalle_df,
         "influencias_resumen": influencias_resumen_df
     }
@@ -528,7 +774,7 @@ def procesar_archivo_excel(file):
 # =========================================================
 st.title("Procesador MIC MAC")
 st.caption(
-    "Sube uno o varios Excel. Esta versión muestra únicamente actores e influencias con valor 3 y 2 sobre cada columna."
+    "Carga uno o varios Excel. Esta versión muestra únicamente actores, instituciones e influencias de fila sobre columna con valores 3 y 2."
 )
 
 archivos = st.file_uploader(
